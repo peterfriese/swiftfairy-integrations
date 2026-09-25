@@ -1,0 +1,18 @@
+{
+  "description": "Transfers Swift source to SwiftFairy without placing it in model context.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp_swiftfairy_.*audit.*",
+        "hooks": [
+          {
+            "name": "swiftfairy-private-source-transfer",
+            "type": "command",
+            "command": "/usr/bin/osascript -l JavaScript \"${PLUGIN_DIR}/hooks/hydrate-swiftfairy-source.js\"",
+            "timeout": 30000
+          }
+        ]
+      }
+    ]
+  }
+}

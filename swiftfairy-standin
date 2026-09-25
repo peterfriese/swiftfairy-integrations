@@ -86,9 +86,20 @@ class AntigravityHandler:
             raise FileNotFoundError(f"Missing bundle: {src_bundle}")
         copy_tree_with_substitution(src_bundle, cls.target_dir, "__SWIFTFAIRY_STDIO_HELPER__", helper_path)
         print(f"  ✅ Installed Antigravity plugin to: {cls.target_dir}")
+        if shutil.which("agy"):
+            try:
+                subprocess.run(["agy", "plugin", "install", str(cls.target_dir)], capture_output=True, text=True, check=False)
+                print("  🔗 Registered plugin with agy CLI")
+            except Exception:
+                pass
 
     @classmethod
     def uninstall(cls):
+        if shutil.which("agy"):
+            try:
+                subprocess.run(["agy", "plugin", "uninstall", "swiftfairy"], capture_output=True, text=True, check=False)
+            except Exception:
+                pass
         if cls.target_dir.exists():
             shutil.rmtree(cls.target_dir)
             print(f"  🗑️  Removed: {cls.target_dir}")
