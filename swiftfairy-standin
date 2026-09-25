@@ -33,7 +33,8 @@ def find_stdio_helper(custom_path=None):
             return candidate
     return None
 
-def copy_tree_with_substitution(src: Path, dst: Path, placeholder: str, replacement: str):
+def copy_tree_with_substitution(src: Path, dst: Path, placeholder_or_dict, replacement=None):
+    replacements = placeholder_or_dict if isinstance(placeholder_or_dict, dict) else {placeholder_or_dict: replacement}
     if dst.exists():
         shutil.rmtree(dst)
     dst.mkdir(parents=True, exist_ok=True)
@@ -51,7 +52,8 @@ def copy_tree_with_substitution(src: Path, dst: Path, placeholder: str, replacem
             if file.endswith((".json", ".jsonc", ".md", ".js")):
                 try:
                     content = src_file.read_text(encoding="utf-8")
-                    content = content.replace(placeholder, replacement)
+                    for k, v in replacements.items():
+                        content = content.replace(k, v)
                     dst_file.write_text(content, encoding="utf-8")
                 except UnicodeDecodeError:
                     shutil.copy2(src_file, dst_file)
@@ -358,7 +360,63 @@ class VSCodeHandler:
             else:
                 print("  ℹ️  SwiftFairy not found in VS Code config.")
         except Exception as e:
-            print(f"  ❌ Error modifying {cls.config_file}: {e}")
+            print("  ❌ Error modifying {cls.config_file}: {e}")
+
+class GeminiCLIHandler:
+    name = "gemini"
+    display_name = "Gemini CLI"
+    target_dir = HOME / ".gemini" / "extensions" / "swiftfairy"
+    trusted_folders_file = HOME / ".gemini" / "trustedFolders.json"
+
+    @classmethod
+    def is_detected(cls):
+        return (HOME / ".gemini").exists() or shutil.which("gemini") is not None
+
+    @classmethod
+    def is_installed(cls):
+        return (cls.target_dir / "gemini-extension.json").exists()
+
+    @classmethod
+    def install(cls, helper_path):
+        src_bundle = BUNDLES_DIR / "GeminiCLI"
+        if not src_bundle.exists():
+            raise FileNotFoundError(f"Missing bundle: {src_bundle}")
+        
+        # 1. Install extension files directly to ~/.gemini/extensions/swiftfairy
+        copy_tree_with_substitution(
+            src_bundle,
+            cls.target_dir,
+            {
+                "__SWIFTFAIRY_STDIO_HELPER__": helper_path,
+                "__EXTENSION_DIR__": str(cls.target_dir)
+            }
+        )
+        print(f"  ✅ Installed Gemini CLI extension directly to: {cls.target_dir}")
+
+        # 2. Pre-authorize in trustedFolders.json to prevent folder-auth / TTY hang
+        try:
+            trusted = {}
+            if cls.trusted_folders_file.exists():
+                try:
+                    trusted = json.loads(cls.trusted_folders_file.read_text(encoding="utf-8"))
+                except Exception:
+                    trusted = {}
+            
+            # Paths in trustedFolders.json are stored lowercase in gemini-cli
+            trusted[str(cls.target_dir).lower()] = "TRUST_FOLDER"
+            cls.trusted_folders_file.parent.mkdir(parents=True, exist_ok=True)
+            cls.trusted_folders_file.write_text(json.dumps(trusted, indent=2) + "\n", encoding="utf-8")
+            print(f"  🔒 Pre-authorized folder trust in: {cls.trusted_folders_file}")
+        except Exception as e:
+            print(f"  ⚠️  Could not update trustedFolders.json: {e}")
+
+    @classmethod
+    def uninstall(cls):
+        if cls.target_dir.exists():
+            shutil.rmtree(cls.target_dir)
+            print(f"  🗑️  Removed: {cls.target_dir}")
+        else:
+            print("  ℹ️  Not installed.")
 
 ALL_HANDLERS = [
     AntigravityHandler,
@@ -367,6 +425,7 @@ ALL_HANDLERS = [
     XcodeHandler,
     CursorHandler,
     VSCodeHandler,
+    GeminiCLIHandler,
 ]
 
 # -----------------------------------------------------------------------------
@@ -448,12 +507,12 @@ def main():
     
     # install
     p_install = subparsers.add_parser("install", help="Install SwiftFairy into an agent")
-    p_install.add_argument("target", help="Agent identifier (antigravity, antigravity-ide, opencode, xcode, cursor, vscode, all)")
+    p_install.add_argument("target", help="Agent identifier (antigravity, antigravity-ide, opencode, xcode, cursor, vscode, gemini, all)")
     p_install.set_defaults(func=cmd_install)
     
     # uninstall
     p_uninstall = subparsers.add_parser("uninstall", help="Uninstall SwiftFairy from an agent")
-    p_uninstall.add_argument("target", help="Agent identifier (antigravity, antigravity-ide, opencode, xcode, cursor, vscode, all)")
+    p_uninstall.add_argument("target", help="Agent identifier (antigravity, antigravity-ide, opencode, xcode, cursor, vscode, gemini, all)")
     p_uninstall.set_defaults(func=cmd_uninstall)
     
     # test

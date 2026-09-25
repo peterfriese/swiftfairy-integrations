@@ -4,6 +4,7 @@ This repository contains pre-packaged integration bundles and a standalone setup
 
 * **Google Antigravity (Agent Manager & CLI)**
 * **Antigravity IDE**
+* **Gemini CLI** (with Folder Trust & TTY hang fix)
 * **OpenCode & OpenChamber**
 * **Xcode Coding Assistant**
 * **Cursor & Visual Studio Code**
@@ -27,6 +28,12 @@ swiftfairy-integrations/
 │   │           └── SKILL.md
 │   ├── AntigravityIDE/         # Profile config for Antigravity IDE
 │   │   └── mcp.json
+│   ├── GeminiCLI/              # Improved Gemini CLI extension (folder trust fixed)
+│   │   ├── gemini-extension.json
+│   │   ├── GEMINI.md
+│   │   ├── .gemini-extension-install.json
+│   │   ├── hooks/
+│   │   └── skills/
 │   ├── OpenCode/               # MCP snippet & skill for OpenCode & OpenChamber
 │   │   ├── mcp_snippet.jsonc
 │   │   └── skills/swiftfairy/SKILL.md
@@ -48,12 +55,14 @@ You can use the standalone script directly to manage integrations on your machin
 
 # Install an integration
 ./swiftfairy-standin install antigravity
+./swiftfairy-standin install gemini
 ./swiftfairy-standin install opencode
 ./swiftfairy-standin install xcode
 ./swiftfairy-standin install all
 
 # Uninstall an integration
 ./swiftfairy-standin uninstall antigravity
+./swiftfairy-standin uninstall gemini
 ./swiftfairy-standin uninstall all
 
 # Verify the stdio helper binary

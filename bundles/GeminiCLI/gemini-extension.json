@@ -1,0 +1,12 @@
+{
+  "name": "swiftfairy",
+  "version": "0.1.4",
+  "description": "Audit Swift code and query Nil Coalescing reference scrolls through the local SwiftFairy app.",
+  "contextFileName": "GEMINI.md",
+  "mcpServers": {
+    "swiftfairy": {
+      "command": "__SWIFTFAIRY_STDIO_HELPER__",
+      "args": []
+    }
+  }
+}
