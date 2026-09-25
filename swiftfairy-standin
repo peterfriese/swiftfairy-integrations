@@ -217,6 +217,14 @@ class OpenCodeHandler:
             shutil.copy2(src_skill, cls.skill_dir / "SKILL.md")
             print(f"  ✅ Installed Skill: {cls.skill_dir / 'SKILL.md'}")
 
+        # 3. Hot-reload OpenCode v2 background daemon if active
+        if shutil.which("opencode"):
+            try:
+                subprocess.run(["opencode", "reload"], capture_output=True, text=True, check=False)
+                print("  🔄 Reloaded OpenCode v2 background daemon")
+            except Exception:
+                pass
+
     @classmethod
     def uninstall(cls):
         # 1. Remove from config
@@ -234,6 +242,13 @@ class OpenCodeHandler:
         if cls.skill_dir.exists():
             shutil.rmtree(cls.skill_dir)
             print(f"  🗑️  Removed skill: {cls.skill_dir}")
+        # 3. Reload OpenCode daemon
+        if shutil.which("opencode"):
+            try:
+                subprocess.run(["opencode", "reload"], capture_output=True, text=True, check=False)
+                print("  🔄 Reloaded OpenCode v2 background daemon")
+            except Exception:
+                pass
 
 class GeminiCLIHandler:
     name = "gemini"
