@@ -298,7 +298,7 @@ class CursorHandler:
         
     @classmethod
     def install(cls, helper_path):
-        src_bundle = BUNDLES_DIR / "AntigravityPlugin"  # Compatible plugin layout
+        src_bundle = BUNDLES_DIR / "Cursor"
         copy_tree_with_substitution(src_bundle, cls.target_dir, "__SWIFTFAIRY_STDIO_HELPER__", helper_path)
         print(f"  ✅ Installed local plugin to: {cls.target_dir}")
 

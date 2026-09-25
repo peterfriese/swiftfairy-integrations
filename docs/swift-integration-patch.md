@@ -1,265 +1,141 @@
-# SwiftFairy Integration Patch for Antigravity, Antigravity IDE & OpenCode
+# SwiftFairy Integration Guide & Native Swift Architecture
 
-This document provides Nil Coalescing with the exact Swift code enhancements to support Google Antigravity (CLI & Desktop), Antigravity IDE, and OpenCode / OpenChamber directly inside SwiftFairy.
+This document provides Nil Coalescing Limited with the architectural blueprint and integration documentation for the drop-in [`SwiftFairyIntegrationInstaller.swift`](../SwiftFairyIntegrationInstaller.swift) source file, supporting:
+
+* **Google Antigravity** (Agent Manager & CLI)
+* **Antigravity IDE**
+* **Gemini CLI** (with zero-hang Folder Trust pre-authorization)
+* **OpenCode & OpenChamber**
+* **Xcode 16 / 27 Coding Assistant** (with versioned Xcode fallback)
+* **Cursor**
+* **Visual Studio Code & VS Code Insiders**
 
 ---
 
-## 1. Antigravity Agent Manager & CLI Integration
+## 🏗️ Architectural Overview
 
-### Strategy: Direct Plugin Placement (No Interactive CLI Subprocess)
-Antigravity automatically discovers plugins located in:
-`~/.gemini/antigravity/plugins/<plugin_name>/`
+SwiftFairy originally relied on spawning external CLI subprocesses (`Process()`) to install extensions for tools like Gemini CLI. In headless macOS GUI environments, non-interactive subprocesses that prompt for authorization deadlock, leaving the app in an infinite "idling" state.
 
-By copying the pre-packaged `AntigravityPlugin` bundle directly into this folder and substituting `__SWIFTFAIRY_STDIO_HELPER__`, Antigravity instantly:
-- Lists SwiftFairy in the **Agent Manager** and `agy plugin list`.
-- Registers the `swiftfairy` skill for subagents and prompts.
-- Launches the `swiftfairy-stdio` MCP server on demand.
-- Executes `hydrate-swiftfairy-source.js` during `PreToolUse` for private source transfer.
+The improved architecture standardizes on **Declarative Direct Placement**:
+1. **Zero Process Execution**: Extensions and plugins are copied directly into the agent's expected configuration directory (`~/.gemini/antigravity/plugins/`, `~/.gemini/extensions/`, `~/.cursor/plugins/local/`).
+2. **Template Variable Substitution**: Bundled JSON configurations contain `__SWIFTFAIRY_STDIO_HELPER__`, which is substituted with the runtime path to `swiftfairy-stdio` during copy.
+3. **Pre-Authorization of Security Stores**: Security stores (such as Gemini's `~/.gemini/trustedFolders.json`) are updated directly by SwiftFairy, preventing headless stdin blockages.
+4. **Dynamic Environment Queries**: Where external tools are necessary (such as detecting versioned beta Xcode installations), SwiftFairy queries `/usr/bin/xcode-select -p` rather than checking hardcoded paths.
 
-```swift
-extension SwiftFairyIntegrationInstaller {
+---
 
-    var isAntigravityInstalled: Bool {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        let antigravityDir = home.appendingPathComponent(".gemini/antigravity")
-        
-        let candidateCLIs = [
-            "/opt/homebrew/bin/agy",
-            "/usr/local/bin/agy",
-            home.appendingPathComponent(".local/bin/agy").path
-        ]
-        
-        return fm.fileExists(atPath: antigravityDir.path) || 
-               candidateCLIs.contains { fm.fileExists(atPath: $0) }
-    }
+## 📦 Bundled Resources Structure
 
-    func installAntigravityPlugin(stdioHelperPath: String) throws {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        let targetPluginDir = home.appendingPathComponent(".gemini/antigravity/plugins/swiftfairy")
-        
-        try fm.createDirectory(at: targetPluginDir, withIntermediateDirectories: true)
-        
-        guard let bundleURL = Bundle.main.url(forResource: "AntigravityPlugin", withExtension: nil) else {
-            throw IntegrationError.bundledIntegrationMissing
-        }
-        
-        // Copy recursively, replacing __SWIFTFAIRY_STDIO_HELPER__ in JSON configs
-        try copyAndSubstitute(
-            from: bundleURL, 
-            to: targetPluginDir, 
-            placeholder: "__SWIFTFAIRY_STDIO_HELPER__", 
-            replacement: stdioHelperPath
-        )
-    }
+Include the bundle folders from `swiftfairy-integrations/bundles/` directly inside `SwiftFairy.app/Contents/Resources/`:
 
-    func uninstallAntigravityPlugin() throws {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        let targetPluginDir = home.appendingPathComponent(".gemini/antigravity/plugins/swiftfairy")
-        if fm.fileExists(atPath: targetPluginDir.path) {
-            try fm.removeItem(at: targetPluginDir)
-        }
-    }
-}
+```text
+SwiftFairy.app/Contents/Resources/
+├── AntigravityPlugin/
+│   ├── plugin.json
+│   ├── mcp_config.json
+│   ├── hooks/
+│   │   ├── hooks.json
+│   │   └── hydrate-swiftfairy-source.js
+│   └── skills/swiftfairy/SKILL.md
+├── AntigravityIDE/
+│   └── mcp.json
+├── Cursor/
+│   ├── plugin.json
+│   ├── mcp.json
+│   └── skills/swiftfairy/SKILL.md
+├── GeminiCLI/
+│   ├── gemini-extension.json
+│   ├── GEMINI.md
+│   ├── .gemini-extension-install.json
+│   ├── hooks/
+│   │   ├── hooks.json
+│   │   └── hydrate-swiftfairy-source.js
+│   └── skills/swiftfairy/SKILL.md
+├── OpenCode/
+│   ├── opencode.jsonc
+│   └── skills/swiftfairy/SKILL.md
+├── VSCode/
+│   ├── mcp.json
+│   └── settings.json
+└── Xcode/
+    └── mcp-servers.json
 ```
 
 ---
 
-## 2. Antigravity IDE Integration
+## 💻 Swift Integration Implementation
 
-### Strategy: One-line addition to VS Code Profile Array
-Antigravity IDE is built on the VS Code shell and stores its MCP settings in `~/Library/Application Support/Antigravity IDE/User/mcp.json`.
+Nil Coalescing can add [`SwiftFairyIntegrationInstaller.swift`](../SwiftFairyIntegrationInstaller.swift) directly into the app's target.
 
-In SwiftFairy's existing VS Code profile scanner, add `Antigravity IDE`:
-
-```swift
-let supportedVSCodeProfiles = [
-    "Library/Application Support/Code/User/mcp.json",
-    "Library/Application Support/Code - Insiders/User/mcp.json",
-    "Library/Application Support/Antigravity IDE/User/mcp.json" // <── Add this path!
-]
-```
-
----
-
-## 3. OpenCode & OpenChamber Integration
-
-### Strategy: Merge into `~/.config/opencode/opencode.jsonc` and Copy Skill
-OpenCode uses an `mcp` dictionary with an array command `["path/to/helper"]`.
+### Example UI / ViewModel Usage:
 
 ```swift
-extension SwiftFairyIntegrationInstaller {
+import SwiftUI
 
-    var isOpenCodeInstalled: Bool {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        let configDir = home.appendingPathComponent(".config/opencode")
-        let openChamberDir = home.appendingPathComponent(".config/openchamber")
-        
-        let candidatePaths = [
-            "/Applications/OpenCode.app",
-            "/opt/homebrew/bin/opencode",
-            "/usr/local/bin/opencode",
-            home.appendingPathComponent(".local/bin/opencode").path
-        ]
-        
-        return fm.fileExists(atPath: configDir.path) ||
-               fm.fileExists(atPath: openChamberDir.path) ||
-               candidatePaths.contains { fm.fileExists(atPath: $0) }
+@Observable
+final class IntegrationsViewModel {
+    private let installer = SwiftFairyIntegrationInstaller.shared
+    var statuses: [SwiftFairyAgent: IntegrationStatus] = [:]
+    var isInstalling = false
+    var errorMessage: String?
+
+    func refresh() {
+        statuses = installer.checkAllStatuses()
     }
 
-    func installOpenCodeIntegration(stdioHelperPath: String) throws {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        let configURL = home.appendingPathComponent(".config/opencode/opencode.jsonc")
-        
-        // 1. Merge MCP Server Entry
-        var json = (try? loadJSON(at: configURL)) ?? [:]
-        var mcpDict = json["mcp"] as? [String: Any] ?? [:]
-        
-        mcpDict["swiftfairy"] = [
-            "type": "local",
-            "command": [stdioHelperPath],
-            "enabled": true
-        ]
-        json["mcp"] = mcpDict
-        try saveJSON(json, to: configURL)
-        
-        // 2. Install Skill
-        let targetSkillDir = home.appendingPathComponent(".config/opencode/skills/swiftfairy")
-        try fm.createDirectory(at: targetSkillDir, withIntermediateDirectories: true)
-        
-        if let skillURL = Bundle.main.url(forResource: "SKILL", withExtension: "md", subdirectory: "AgentPlugin/skills/swiftfairy") {
-            let dest = targetSkillDir.appendingPathComponent("SKILL.md")
-            try? fm.removeItem(at: dest)
-            try fm.copyItem(at: skillURL, to: dest)
+    func install(agent: SwiftFairyAgent) {
+        guard let helperURL = installer.defaultStdioHelperURL else {
+            errorMessage = "swiftfairy-stdio helper binary not found."
+            return
+        }
+
+        isInstalling = true
+        defer { isInstalling = false }
+
+        do {
+            switch agent {
+            case .antigravity:
+                try installer.installAntigravityPlugin(stdioHelperPath: helperURL.path)
+            case .antigravityIDE:
+                try installer.installAntigravityIDE(stdioHelperPath: helperURL.path)
+            case .geminiCLI:
+                try installer.installGeminiExtensionDirectly(stdioHelperPath: helperURL.path)
+            case .openCode:
+                try installer.installOpenCodeIntegration(stdioHelperPath: helperURL.path)
+            case .xcode:
+                try installer.installXcodeIntegration(stdioHelperPath: helperURL.path)
+            case .cursor:
+                try installer.installCursorPlugin(stdioHelperPath: helperURL.path)
+            case .vscode:
+                try installer.installVSCodeIntegration(stdioHelperPath: helperURL.path)
+            }
+            refresh()
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
-}
-```
 
----
-
-## 4. Robust Xcode Detection Fallback
-
-If a user installs multiple beta versions of Xcode via Xcodes.app, `/Applications/Xcode.app` may be a broken symlink or missing entirely. Adding `xcode-select -p` fallback guarantees detection:
-
-```swift
-var activeXcodeURL: URL? {
-    let standardURLs = [
-        URL(fileURLWithPath: "/Applications/Xcode.app"),
-        URL(fileURLWithPath: "/Applications/Xcode-beta.app")
-    ]
-    for url in standardURLs where FileManager.default.fileExists(atPath: url.path) {
-        return url
-    }
-    
-    // Fallback: Query active xcode-select developer directory
-    let pipe = Pipe()
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
-    process.arguments = ["-p"]
-    process.standardOutput = pipe
-    try? process.run()
-    process.waitUntilExit()
-    
-    guard process.terminationStatus == 0,
-          let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-          !output.isEmpty else {
-        return nil
-    }
-    
-    // /Applications/Xcode-27.x.app/Contents/Developer -> traverse up 2 levels
-    let devURL = URL(fileURLWithPath: output)
-    let appURL = devURL.deletingLastPathComponent().deletingLastPathComponent()
-    return FileManager.default.fileExists(atPath: appURL.path) ? appURL : nil
-}
-
----
-
-## 5. Fixing the Gemini CLI Folder Trust & Subprocess Hang
-
-### The Root Cause of the UI Freeze
-When users click **Install** on Gemini CLI in SwiftFairy, the UI often gets stuck in an infinite spinner ("idling").
-
-**Why this happens:**
-1. SwiftFairy executes:
-   ```bash
-   gemini extensions install "$HOME/Library/Application Support/Nil Coalescing/SwiftFairy/Integrations/GeminiExtension" --consent
-   ```
-2. While `--consent` skips the generic extension warning dialog, `@google/gemini-cli` has a separate security check: **Folder Trust** (`isWorkspaceTrusted()`).
-3. If the local directory has not been pre-registered in `~/.gemini/trustedFolders.json`, Gemini CLI prints:
-   ```text
-   Do you trust the files in this folder? [y/N]:
-   ```
-   and opens a `readline` prompt on `process.stdin`.
-4. Because SwiftFairy spawned this process as a background task without an interactive terminal (TTY) or piped stdin, the CLI blocks on `stdin` forever, causing SwiftFairy to wait indefinitely.
-
----
-
-### Solution A (Recommended): Direct Filesystem Installation (No CLI Subprocess)
-
-Just like Antigravity, Gemini CLI automatically discovers and activates extensions located in `~/.gemini/extensions/<name>/` at startup without running any CLI commands.
-
-By copying the files directly and writing the local install metadata, installation completes in **< 10ms with zero risk of hangs or missing dependencies**:
-
-```swift
-extension SwiftFairyIntegrationInstaller {
-
-    var isGeminiInstalled: Bool {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        return fm.fileExists(atPath: home.appendingPathComponent(".gemini").path) ||
-               ["/opt/homebrew/bin/gemini", "/usr/local/bin/gemini"].contains { fm.fileExists(atPath: $0) }
-    }
-
-    func installGeminiExtensionDirectly(stdioHelperPath: String) throws {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        let targetDir = home.appendingPathComponent(".gemini/extensions/swiftfairy")
-        
-        try fm.createDirectory(at: targetDir, withIntermediateDirectories: true)
-        
-        guard let bundleURL = Bundle.main.url(forResource: "GeminiExtension", withExtension: nil) else {
-            throw IntegrationError.bundledIntegrationMissing
-        }
-        
-        // 1. Copy extension bundle, substituting stdio helper
-        try copyAndSubstitute(
-            from: bundleURL, 
-            to: targetDir, 
-            placeholder: "__SWIFTFAIRY_STDIO_HELPER__", 
-            replacement: stdioHelperPath
-        )
-        
-        // 2. Write .gemini-extension-install.json
-        let installMeta: [String: Any] = [
-            "source": targetDir.path,
-            "type": "local"
-        ]
-        let metaData = try JSONSerialization.data(withJSONObject: installMeta, options: [.prettyPrinted])
-        try metaData.write(to: targetDir.appendingPathComponent(".gemini-extension-install.json"))
-        
-        // 3. Pre-authorize in ~/.gemini/trustedFolders.json to avoid prompts on future CLI interactions
-        let trustedFile = home.appendingPathComponent(".gemini/trustedFolders.json")
-        var trustedFolders: [String: String] = [:]
-        if let existing = try? Data(contentsOf: trustedFile),
-           let json = try? JSONSerialization.jsonObject(with: existing) as? [String: String] {
-            trustedFolders = json
-        }
-        trustedFolders[targetDir.path.lowercased()] = "TRUST_FOLDER"
-        let updatedData = try JSONSerialization.data(withJSONObject: trustedFolders, options: [.prettyPrinted])
-        try updatedData.write(to: trustedFile)
-    }
-
-    func uninstallGeminiExtensionDirectly() throws {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        let targetDir = home.appendingPathComponent(".gemini/extensions/swiftfairy")
-        if fm.fileExists(atPath: targetDir.path) {
-            try fm.removeItem(at: targetDir)
+    func uninstall(agent: SwiftFairyAgent) {
+        do {
+            switch agent {
+            case .antigravity:
+                try installer.uninstallAntigravityPlugin()
+            case .antigravityIDE:
+                try installer.uninstallAntigravityIDE()
+            case .geminiCLI:
+                try installer.uninstallGeminiExtensionDirectly()
+            case .openCode:
+                try installer.uninstallOpenCodeIntegration()
+            case .xcode:
+                try installer.uninstallXcodeIntegration()
+            case .cursor:
+                try installer.uninstallCursorPlugin()
+            case .vscode:
+                try installer.uninstallVSCodeIntegration()
+            }
+            refresh()
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 }
@@ -267,33 +143,30 @@ extension SwiftFairyIntegrationInstaller {
 
 ---
 
-### Solution B: If Retaining the `Process` Execution
+## 🔍 Detailed Agent Integration Mechanisms
 
-If you prefer to continue invoking `/opt/homebrew/bin/gemini extensions install ...`, apply these two changes to prevent the interactive prompt:
+### 1. Google Antigravity (Agent Manager & CLI)
+* **Target**: `~/.gemini/antigravity/plugins/swiftfairy/`
+* **Mechanism**: Antigravity automatically indexes plugins located in this directory at startup.
+* **Special Features**: Includes `PreToolUse` hook (`hydrate-swiftfairy-source.js`) to transfer active editor Swift code directly into tool invocation arguments without context-window pollution.
 
-1. **Inject `GEMINI_CLI_TRUST_WORKSPACE = "true"` into `process.environment`**:
-   Gemini CLI explicitly checks this environment variable in `checkPathTrust()`:
-   ```javascript
-   if (process.env["GEMINI_CLI_TRUST_WORKSPACE"] === "true") {
-       return { isTrusted: true, source: "env" };
-   }
-   ```
-2. **Pre-seed `~/.gemini/trustedFolders.json`** before launching the process.
+### 2. Antigravity IDE
+* **Target**: `~/Library/Application Support/Antigravity IDE/User/mcp.json`
+* **Mechanism**: Safely loads and merges the `swiftfairy` key under `mcpServers`.
 
-```swift
-func installGeminiViaCLI(sourceDir: URL) throws {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/gemini")
-    process.arguments = ["extensions", "install", sourceDir.path, "--consent"]
-    
-    // Crucial: Bypass folder trust checks in non-interactive subprocesses!
-    var env = ProcessInfo.processInfo.environment
-    env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
-    process.environment = env
-    
-    try process.run()
-    process.waitUntilExit()
-}
-```
+### 3. Gemini CLI
+* **Target**: `~/.gemini/extensions/swiftfairy/` & `~/.gemini/trustedFolders.json`
+* **Mechanism**: Direct copy with `.gemini-extension-install.json` and pre-authorized folder trust in `trustedFolders.json` (`"TRUST_FOLDER"`).
+* **Fix**: Completely eliminates the interactive TTY stdin prompt (`Do you want to trust this folder? [y/N]`) that caused SwiftFairy's UI to freeze.
 
-```
+### 4. OpenCode & OpenChamber
+* **Target**: `~/.config/opencode/opencode.jsonc` & `~/.config/opencode/skills/swiftfairy/SKILL.md`
+* **Mechanism**: Safely strips JSONC comments, merges `mcp.swiftfairy`, and deploys the agent skill.
+
+### 5. Xcode CodingAssistant
+* **Target**: `~/Library/Developer/Xcode/CodingAssistant/mcp-servers.json`
+* **Mechanism**: Writes the stdio helper to Xcode's MCP registry. Detection falls back to `/usr/bin/xcode-select -p` to support multiple beta installations (e.g. from Xcodes.app).
+
+### 6. Cursor & Visual Studio Code
+* **Cursor Target**: `~/.cursor/plugins/local/swiftfairy/`
+* **VS Code Target**: `~/Library/Application Support/Code/User/mcp.json`

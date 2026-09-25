@@ -1,5 +1,5 @@
 {
-  // Add this "mcp" object into your ~/.config/opencode/opencode.jsonc file:
+  "$schema": "https://opencode.ai/schema/v1/config.json",
   "mcp": {
     "swiftfairy": {
       "type": "local",
