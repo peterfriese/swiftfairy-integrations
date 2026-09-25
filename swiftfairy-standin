@@ -99,6 +99,7 @@ class AntigravityIDEHandler:
     name = "antigravity-ide"
     display_name = "Antigravity IDE"
     config_file = HOME / "Library" / "Application Support" / "Antigravity IDE" / "User" / "mcp.json"
+    skill_dir = HOME / ".gemini" / "antigravity" / "skills" / "swiftfairy"
     
     @classmethod
     def is_detected(cls):
@@ -109,11 +110,14 @@ class AntigravityIDEHandler:
     def is_installed(cls):
         if not cls.config_file.exists():
             return False
+        has_mcp = False
         try:
             data = json.loads(cls.config_file.read_text(encoding="utf-8"))
-            return "swiftfairy" in data.get("mcpServers", {})
+            has_mcp = "swiftfairy" in data.get("mcpServers", {})
         except Exception:
-            return False
+            has_mcp = False
+        has_skill = (cls.skill_dir / "SKILL.md").exists()
+        return has_mcp and has_skill
             
     @classmethod
     def install(cls, helper_path):
@@ -131,22 +135,33 @@ class AntigravityIDEHandler:
         }
         cls.config_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         print(f"  ✅ Configured MCP server in: {cls.config_file}")
+        
+        # Deploy Skill so Antigravity IDE agent has the complete guidance rules
+        cls.skill_dir.mkdir(parents=True, exist_ok=True)
+        src_skill = BUNDLES_DIR / "AntigravityIDE" / "skills" / "swiftfairy" / "SKILL.md"
+        if src_skill.exists():
+            shutil.copy2(src_skill, cls.skill_dir / "SKILL.md")
+            print(f"  ✅ Installed Antigravity IDE Skill: {cls.skill_dir / 'SKILL.md'}")
 
     @classmethod
     def uninstall(cls):
-        if not cls.config_file.exists():
+        if cls.config_file.exists():
+            try:
+                data = json.loads(cls.config_file.read_text(encoding="utf-8"))
+                if "swiftfairy" in data.get("mcpServers", {}):
+                    del data["mcpServers"]["swiftfairy"]
+                    cls.config_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+                    print(f"  🗑️  Removed swiftfairy from: {cls.config_file}")
+                else:
+                    print("  ℹ️  SwiftFairy not found in MCP configuration.")
+            except Exception as e:
+                print(f"  ❌ Error updating {cls.config_file}: {e}")
+        else:
             print("  ℹ️  Config file does not exist.")
-            return
-        try:
-            data = json.loads(cls.config_file.read_text(encoding="utf-8"))
-            if "swiftfairy" in data.get("mcpServers", {}):
-                del data["mcpServers"]["swiftfairy"]
-                cls.config_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-                print(f"  🗑️  Removed swiftfairy from: {cls.config_file}")
-            else:
-                print("  ℹ️  SwiftFairy not found in configuration.")
-        except Exception as e:
-            print(f"  ❌ Error updating {cls.config_file}: {e}")
+            
+        if cls.skill_dir.exists():
+            shutil.rmtree(cls.skill_dir)
+            print(f"  🗑️  Removed skill: {cls.skill_dir}")
 
 class OpenCodeHandler:
     name = "opencode"
@@ -220,148 +235,6 @@ class OpenCodeHandler:
             shutil.rmtree(cls.skill_dir)
             print(f"  🗑️  Removed skill: {cls.skill_dir}")
 
-class XcodeHandler:
-    name = "xcode"
-    display_name = "Xcode coding agents"
-    config_file = HOME / "Library" / "Developer" / "Xcode" / "CodingAssistant" / "mcp-servers.json"
-    
-    @classmethod
-    def is_detected(cls):
-        # 1. Direct app or symlink check
-        if Path("/Applications/Xcode.app").exists() or Path("/Applications/Xcode-beta.app").exists():
-            return True
-        # 2. Active developer directory fallback via xcode-select
-        try:
-            res = subprocess.run(["/usr/bin/xcode-select", "-p"], capture_output=True, text=True)
-            if res.returncode == 0 and res.stdout.strip():
-                dev_path = Path(res.stdout.strip())
-                return dev_path.exists()
-        except Exception:
-            pass
-        return False
-        
-    @classmethod
-    def is_installed(cls):
-        if not cls.config_file.exists():
-            return False
-        try:
-            data = json.loads(cls.config_file.read_text(encoding="utf-8"))
-            return "swiftfairy" in data.get("mcpServers", {})
-        except Exception:
-            return False
-            
-    @classmethod
-    def install(cls, helper_path):
-        cls.config_file.parent.mkdir(parents=True, exist_ok=True)
-        data = {}
-        if cls.config_file.exists():
-            try:
-                data = json.loads(cls.config_file.read_text(encoding="utf-8"))
-            except Exception:
-                data = {}
-        servers = data.setdefault("mcpServers", {})
-        servers["swiftfairy"] = {
-            "command": helper_path,
-            "args": []
-        }
-        cls.config_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        print(f"  ✅ Configured Xcode CodingAssistant: {cls.config_file}")
-
-    @classmethod
-    def uninstall(cls):
-        if not cls.config_file.exists():
-            print("  ℹ️  Xcode config does not exist.")
-            return
-        try:
-            data = json.loads(cls.config_file.read_text(encoding="utf-8"))
-            if "swiftfairy" in data.get("mcpServers", {}):
-                del data["mcpServers"]["swiftfairy"]
-                cls.config_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-                print(f"  🗑️  Removed swiftfairy from {cls.config_file}")
-            else:
-                print("  ℹ️  SwiftFairy not found in Xcode configuration.")
-        except Exception as e:
-            print(f"  ❌ Error modifying {cls.config_file}: {e}")
-
-class CursorHandler:
-    name = "cursor"
-    display_name = "Cursor"
-    target_dir = HOME / ".cursor" / "plugins" / "local" / "swiftfairy"
-    
-    @classmethod
-    def is_detected(cls):
-        return Path("/Applications/Cursor.app").exists() or (HOME / ".cursor").exists()
-        
-    @classmethod
-    def is_installed(cls):
-        return (cls.target_dir / "plugin.json").exists()
-        
-    @classmethod
-    def install(cls, helper_path):
-        src_bundle = BUNDLES_DIR / "Cursor"
-        copy_tree_with_substitution(src_bundle, cls.target_dir, "__SWIFTFAIRY_STDIO_HELPER__", helper_path)
-        print(f"  ✅ Installed local plugin to: {cls.target_dir}")
-
-    @classmethod
-    def uninstall(cls):
-        if cls.target_dir.exists():
-            shutil.rmtree(cls.target_dir)
-            print(f"  🗑️  Removed: {cls.target_dir}")
-        else:
-            print("  ℹ️  Not installed.")
-
-class VSCodeHandler:
-    name = "vscode"
-    display_name = "Visual Studio Code"
-    config_file = HOME / "Library" / "Application Support" / "Code" / "User" / "mcp.json"
-    
-    @classmethod
-    def is_detected(cls):
-        return Path("/Applications/Visual Studio Code.app").exists() or shutil.which("code") is not None
-        
-    @classmethod
-    def is_installed(cls):
-        if not cls.config_file.exists():
-            return False
-        try:
-            data = json.loads(cls.config_file.read_text(encoding="utf-8"))
-            return "swiftfairy" in data.get("mcpServers", {})
-        except Exception:
-            return False
-            
-    @classmethod
-    def install(cls, helper_path):
-        cls.config_file.parent.mkdir(parents=True, exist_ok=True)
-        data = {}
-        if cls.config_file.exists():
-            try:
-                data = json.loads(cls.config_file.read_text(encoding="utf-8"))
-            except Exception:
-                data = {}
-        servers = data.setdefault("mcpServers", {})
-        servers["swiftfairy"] = {
-            "command": helper_path,
-            "args": []
-        }
-        cls.config_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        print(f"  ✅ Configured VS Code MCP: {cls.config_file}")
-
-    @classmethod
-    def uninstall(cls):
-        if not cls.config_file.exists():
-            print("  ℹ️  VS Code mcp.json does not exist.")
-            return
-        try:
-            data = json.loads(cls.config_file.read_text(encoding="utf-8"))
-            if "swiftfairy" in data.get("mcpServers", {}):
-                del data["mcpServers"]["swiftfairy"]
-                cls.config_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-                print(f"  🗑️  Removed swiftfairy from {cls.config_file}")
-            else:
-                print("  ℹ️  SwiftFairy not found in VS Code config.")
-        except Exception as e:
-            print("  ❌ Error modifying {cls.config_file}: {e}")
-
 class GeminiCLIHandler:
     name = "gemini"
     display_name = "Gemini CLI"
@@ -421,11 +294,8 @@ class GeminiCLIHandler:
 ALL_HANDLERS = [
     AntigravityHandler,
     AntigravityIDEHandler,
-    OpenCodeHandler,
-    XcodeHandler,
-    CursorHandler,
-    VSCodeHandler,
     GeminiCLIHandler,
+    OpenCodeHandler,
 ]
 
 # -----------------------------------------------------------------------------
@@ -507,12 +377,12 @@ def main():
     
     # install
     p_install = subparsers.add_parser("install", help="Install SwiftFairy into an agent")
-    p_install.add_argument("target", help="Agent identifier (antigravity, antigravity-ide, opencode, xcode, cursor, vscode, gemini, all)")
+    p_install.add_argument("target", help="Agent identifier (antigravity, antigravity-ide, gemini, opencode, all)")
     p_install.set_defaults(func=cmd_install)
     
     # uninstall
     p_uninstall = subparsers.add_parser("uninstall", help="Uninstall SwiftFairy from an agent")
-    p_uninstall.add_argument("target", help="Agent identifier (antigravity, antigravity-ide, opencode, xcode, cursor, vscode, gemini, all)")
+    p_uninstall.add_argument("target", help="Agent identifier (antigravity, antigravity-ide, gemini, opencode, all)")
     p_uninstall.set_defaults(func=cmd_uninstall)
     
     # test

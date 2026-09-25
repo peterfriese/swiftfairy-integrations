@@ -5,12 +5,9 @@
 //  Created for SwiftFairy / Nil Coalescing Limited.
 //  Production-ready, drop-in integration manager supporting modern AI coding agents:
 //  - Google Antigravity (Agent Manager & CLI)
-//  - Antigravity IDE
+//  - Antigravity IDE (with complete MCP, Skill, and Rules support)
 //  - Gemini CLI (with zero-hang Folder Trust pre-authorization)
-//  - OpenCode & OpenChamber
-//  - Xcode 16/27 CodingAssistant (with robust xcode-select fallback)
-//  - Cursor
-//  - Visual Studio Code & VS Code Insiders
+//  - OpenCode & OpenChamber (with comment-safe JSONC and skills)
 //
 
 import Foundation
@@ -22,9 +19,6 @@ public enum SwiftFairyAgent: String, CaseIterable, Identifiable, Sendable {
     case antigravityIDE = "antigravity-ide"
     case geminiCLI = "gemini"
     case openCode = "opencode"
-    case xcode = "xcode"
-    case cursor = "cursor"
-    case vscode = "vscode"
 
     public var id: String { rawValue }
 
@@ -38,12 +32,6 @@ public enum SwiftFairyAgent: String, CaseIterable, Identifiable, Sendable {
             return "Gemini CLI"
         case .openCode:
             return "OpenCode & OpenChamber"
-        case .xcode:
-            return "Xcode Coding Assistant"
-        case .cursor:
-            return "Cursor"
-        case .vscode:
-            return "Visual Studio Code"
         }
     }
 
@@ -57,12 +45,6 @@ public enum SwiftFairyAgent: String, CaseIterable, Identifiable, Sendable {
             return "GeminiCLI"
         case .openCode:
             return "OpenCode"
-        case .xcode:
-            return "Xcode"
-        case .cursor:
-            return "Cursor"
-        case .vscode:
-            return "VSCode"
         }
     }
 }
@@ -160,21 +142,6 @@ public final class SwiftFairyIntegrationInstaller: @unchecked Sendable {
             if isOpenCodeConfigured { return .installed }
             if isOpenCodeDetected { return .detected(readyToInstall: true) }
             return .notFound
-
-        case .xcode:
-            if isXcodeConfigured { return .installed }
-            if isXcodeDetected { return .detected(readyToInstall: true) }
-            return .notFound
-
-        case .cursor:
-            if isCursorPluginInstalled { return .installed }
-            if isCursorDetected { return .detected(readyToInstall: true) }
-            return .notFound
-
-        case .vscode:
-            if isVSCodeConfigured { return .installed }
-            if isVSCodeDetected { return .detected(readyToInstall: true) }
-            return .notFound
         }
     }
 
@@ -237,19 +204,24 @@ public final class SwiftFairyIntegrationInstaller: @unchecked Sendable {
         homeDirectory.appendingPathComponent("Library/Application Support/Antigravity IDE/User/mcp.json")
     }
 
+    public var antigravityIDESkillURL: URL {
+        homeDirectory.appendingPathComponent(".gemini/antigravity/skills/swiftfairy/SKILL.md")
+    }
+
     public var isAntigravityIDEConfigured: Bool {
         guard let data = try? Data(contentsOf: antigravityIDEMCPConfigURL),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let servers = json["mcpServers"] as? [String: Any] else {
             return false
         }
-        return servers["swiftfairy"] != nil
+        return servers["swiftfairy"] != nil && fileManager.fileExists(atPath: antigravityIDESkillURL.path)
     }
 
-    public func installAntigravityIDE(stdioHelperPath: String) throws {
+    public func installAntigravityIDE(stdioHelperPath: String, bundleURL: URL? = nil) throws {
         let configURL = antigravityIDEMCPConfigURL
         try fileManager.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 
+        // 1. Configure MCP server in Antigravity IDE User settings
         var json = (try? loadJSON(at: configURL)) ?? [:]
         var servers = json["mcpServers"] as? [String: Any] ?? [:]
         servers["swiftfairy"] = [
@@ -258,17 +230,34 @@ public final class SwiftFairyIntegrationInstaller: @unchecked Sendable {
         ]
         json["mcpServers"] = servers
         try saveJSON(json, to: configURL)
+
+        // 2. Deploy Skill so Antigravity IDE agent has the complete guidance rules
+        let sourceURL = try resolveBundle(named: SwiftFairyAgent.antigravityIDE.bundleResourceName, explicitURL: bundleURL)
+        let skillSource = sourceURL.appendingPathComponent("skills/swiftfairy/SKILL.md")
+        if fileManager.fileExists(atPath: skillSource.path) {
+            let skillTargetDir = antigravityIDESkillURL.deletingLastPathComponent()
+            try fileManager.createDirectory(at: skillTargetDir, withIntermediateDirectories: true)
+            if fileManager.fileExists(atPath: antigravityIDESkillURL.path) {
+                try fileManager.removeItem(at: antigravityIDESkillURL)
+            }
+            try fileManager.copyItem(at: skillSource, to: antigravityIDESkillURL)
+        }
     }
 
     public func uninstallAntigravityIDE() throws {
         let configURL = antigravityIDEMCPConfigURL
-        guard fileManager.fileExists(atPath: configURL.path),
-              var json = try? loadJSON(at: configURL),
-              var servers = json["mcpServers"] as? [String: Any] else { return }
+        if fileManager.fileExists(atPath: configURL.path),
+           var json = try? loadJSON(at: configURL),
+           var servers = json["mcpServers"] as? [String: Any] {
+            servers.removeValue(forKey: "swiftfairy")
+            json["mcpServers"] = servers
+            try? saveJSON(json, to: configURL)
+        }
 
-        servers.removeValue(forKey: "swiftfairy")
-        json["mcpServers"] = servers
-        try saveJSON(json, to: configURL)
+        let skillTargetDir = antigravityIDESkillURL.deletingLastPathComponent()
+        if fileManager.fileExists(atPath: skillTargetDir.path) {
+            try? fileManager.removeItem(at: skillTargetDir)
+        }
     }
 
     // MARK: - 3. Gemini CLI (Direct Placement + Folder Trust Fix)
@@ -427,157 +416,6 @@ public final class SwiftFairyIntegrationInstaller: @unchecked Sendable {
         }
     }
 
-    // MARK: - 5. Xcode CodingAssistant (With xcode-select -p Fallback)
-
-    public var isXcodeDetected: Bool {
-        if fileManager.fileExists(atPath: "/Applications/Xcode.app") ||
-           fileManager.fileExists(atPath: "/Applications/Xcode-beta.app") {
-            return true
-        }
-
-        // Check active developer directory via xcode-select -p
-        guard let devPath = activeXcodeDeveloperPath() else { return false }
-        return fileManager.fileExists(atPath: devPath)
-    }
-
-    public var xcodeMCPConfigURL: URL {
-        homeDirectory.appendingPathComponent("Library/Developer/Xcode/CodingAssistant/mcp-servers.json")
-    }
-
-    public var isXcodeConfigured: Bool {
-        guard let data = try? Data(contentsOf: xcodeMCPConfigURL),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let servers = json["mcpServers"] as? [String: Any] else {
-            return false
-        }
-        return servers["swiftfairy"] != nil
-    }
-
-    public func installXcodeIntegration(stdioHelperPath: String) throws {
-        let configURL = xcodeMCPConfigURL
-        try fileManager.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-
-        var json = (try? loadJSON(at: configURL)) ?? [:]
-        var servers = json["mcpServers"] as? [String: Any] ?? [:]
-        servers["swiftfairy"] = [
-            "command": stdioHelperPath,
-            "args": []
-        ]
-        json["mcpServers"] = servers
-        try saveJSON(json, to: configURL)
-    }
-
-    public func uninstallXcodeIntegration() throws {
-        let configURL = xcodeMCPConfigURL
-        guard fileManager.fileExists(atPath: configURL.path),
-              var json = try? loadJSON(at: configURL),
-              var servers = json["mcpServers"] as? [String: Any] else { return }
-
-        servers.removeValue(forKey: "swiftfairy")
-        json["mcpServers"] = servers
-        try saveJSON(json, to: configURL)
-    }
-
-    private func activeXcodeDeveloperPath() -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
-        process.arguments = ["-p"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else { return nil }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return (output?.isEmpty == false) ? output : nil
-        } catch {
-            return nil
-        }
-    }
-
-    // MARK: - 6. Cursor
-
-    public var isCursorDetected: Bool {
-        fileManager.fileExists(atPath: "/Applications/Cursor.app") ||
-        fileManager.fileExists(atPath: homeDirectory.appendingPathComponent(".cursor").path)
-    }
-
-    public var cursorPluginDirectory: URL {
-        homeDirectory.appendingPathComponent(".cursor/plugins/local/swiftfairy")
-    }
-
-    public var isCursorPluginInstalled: Bool {
-        let manifest = cursorPluginDirectory.appendingPathComponent("plugin.json")
-        let mcp = cursorPluginDirectory.appendingPathComponent("mcp.json")
-        return fileManager.fileExists(atPath: manifest.path) &&
-               fileManager.fileExists(atPath: mcp.path)
-    }
-
-    public func installCursorPlugin(stdioHelperPath: String, bundleURL: URL? = nil) throws {
-        let targetDir = cursorPluginDirectory
-        let sourceURL = try resolveBundle(named: SwiftFairyAgent.cursor.bundleResourceName, explicitURL: bundleURL)
-
-        try copyTreeWithSubstitutions(
-            from: sourceURL,
-            to: targetDir,
-            replacements: ["__SWIFTFAIRY_STDIO_HELPER__": stdioHelperPath]
-        )
-    }
-
-    public func uninstallCursorPlugin() throws {
-        let targetDir = cursorPluginDirectory
-        if fileManager.fileExists(atPath: targetDir.path) {
-            try fileManager.removeItem(at: targetDir)
-        }
-    }
-
-    // MARK: - 7. Visual Studio Code
-
-    public var isVSCodeDetected: Bool {
-        fileManager.fileExists(atPath: "/Applications/Visual Studio Code.app") ||
-        fileManager.fileExists(atPath: homeDirectory.appendingPathComponent("Library/Application Support/Code").path)
-    }
-
-    public var vsCodeMCPConfigURL: URL {
-        homeDirectory.appendingPathComponent("Library/Application Support/Code/User/mcp.json")
-    }
-
-    public var isVSCodeConfigured: Bool {
-        guard let data = try? Data(contentsOf: vsCodeMCPConfigURL),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let servers = json["mcpServers"] as? [String: Any] else {
-            return false
-        }
-        return servers["swiftfairy"] != nil
-    }
-
-    public func installVSCodeIntegration(stdioHelperPath: String) throws {
-        let configURL = vsCodeMCPConfigURL
-        try fileManager.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-
-        var json = (try? loadJSON(at: configURL)) ?? [:]
-        var servers = json["mcpServers"] as? [String: Any] ?? [:]
-        servers["swiftfairy"] = [
-            "command": stdioHelperPath,
-            "args": []
-        ]
-        json["mcpServers"] = servers
-        try saveJSON(json, to: configURL)
-    }
-
-    public func uninstallVSCodeIntegration() throws {
-        let configURL = vsCodeMCPConfigURL
-        guard fileManager.fileExists(atPath: configURL.path),
-              var json = try? loadJSON(at: configURL),
-              var servers = json["mcpServers"] as? [String: Any] else { return }
-
-        servers.removeValue(forKey: "swiftfairy")
-        json["mcpServers"] = servers
-        try saveJSON(json, to: configURL)
-    }
-
     // MARK: - Batch Operations
 
     public func installAll(stdioHelperPath: String, bundleResolver: ((SwiftFairyAgent) -> URL?)? = nil) throws {
@@ -585,22 +423,13 @@ public final class SwiftFairyIntegrationInstaller: @unchecked Sendable {
             try installAntigravityPlugin(stdioHelperPath: stdioHelperPath, bundleURL: bundleResolver?(.antigravity))
         }
         if isAntigravityIDEDetected {
-            try installAntigravityIDE(stdioHelperPath: stdioHelperPath)
+            try installAntigravityIDE(stdioHelperPath: stdioHelperPath, bundleURL: bundleResolver?(.antigravityIDE))
         }
         if isGeminiDetected {
             try installGeminiExtensionDirectly(stdioHelperPath: stdioHelperPath, bundleURL: bundleResolver?(.geminiCLI))
         }
         if isOpenCodeDetected {
             try installOpenCodeIntegration(stdioHelperPath: stdioHelperPath, bundleURL: bundleResolver?(.openCode))
-        }
-        if isXcodeDetected {
-            try installXcodeIntegration(stdioHelperPath: stdioHelperPath)
-        }
-        if isCursorDetected {
-            try installCursorPlugin(stdioHelperPath: stdioHelperPath, bundleURL: bundleResolver?(.cursor))
-        }
-        if isVSCodeDetected {
-            try installVSCodeIntegration(stdioHelperPath: stdioHelperPath)
         }
     }
 
@@ -609,9 +438,6 @@ public final class SwiftFairyIntegrationInstaller: @unchecked Sendable {
         try uninstallAntigravityIDE()
         try uninstallGeminiExtensionDirectly()
         try uninstallOpenCodeIntegration()
-        try uninstallXcodeIntegration()
-        try uninstallCursorPlugin()
-        try uninstallVSCodeIntegration()
     }
 
     // MARK: - Utilities & File System Helpers

@@ -3,12 +3,9 @@
 This repository contains pre-packaged, 100% complete integration bundles, a drop-in native Swift installer, and a standalone management CLI to connect **SwiftFairy** with modern AI coding agents:
 
 * **Google Antigravity** (Agent Manager & CLI)
-* **Antigravity IDE**
+* **Antigravity IDE** (with complete MCP, Skill, and Rules support)
 * **Gemini CLI** (with zero-hang Folder Trust pre-authorization)
-* **OpenCode & OpenChamber**
-* **Xcode 16 / 27 Coding Assistant** (with versioned Xcode fallback)
-* **Cursor**
-* **Visual Studio Code & VS Code Insiders**
+* **OpenCode & OpenChamber** (with comment-safe JSONC and skills)
 
 All integrations are **complete and fully self-contained**—no manual file-patching, no partial diffs, and no missing dependencies.
 
@@ -30,15 +27,14 @@ swiftfairy-integrations/
 │   │   │   └── hydrate-swiftfairy-source.js
 │   │   └── skills/swiftfairy/
 │   │       └── SKILL.md                  # Complete reference guidance & audit skill
-│   ├── AntigravityIDE/                   # Profile configuration for Antigravity IDE
+│   ├── AntigravityIDE/                   # Full configuration bundle for Antigravity IDE
 │   │   ├── README.md
-│   │   └── mcp.json
-│   ├── Cursor/                           # Complete local plugin bundle for Cursor
-│   │   ├── README.md
-│   │   ├── plugin.json
-│   │   ├── mcp.json
+│   │   ├── mcp.json                      # MCP server configuration
+│   │   ├── settings.json                 # Recommended IDE settings
+│   │   ├── rules/
+│   │   │   └── AGENTS.md                 # Contextual Swift/SwiftUI rules
 │   │   └── skills/swiftfairy/
-│   │       └── SKILL.md
+│   │       └── SKILL.md                  # Complete reference guidance & audit skill
 │   ├── GeminiCLI/                        # Full Gemini CLI extension (folder trust fixed)
 │   │   ├── README.md
 │   │   ├── gemini-extension.json
@@ -47,18 +43,11 @@ swiftfairy-integrations/
 │   │   ├── hooks/
 │   │   └── skills/swiftfairy/
 │   │       └── SKILL.md
-│   ├── OpenCode/                         # OpenCode & OpenChamber full bundle
-│   │   ├── README.md
-│   │   ├── opencode.jsonc                # Complete configuration file
-│   │   └── skills/swiftfairy/
-│   │       └── SKILL.md
-│   ├── VSCode/                           # Visual Studio Code & Insiders configuration
-│   │   ├── README.md
-│   │   ├── mcp.json
-│   │   └── settings.json
-│   └── Xcode/                            # Xcode CodingAssistant configuration
+│   └── OpenCode/                         # OpenCode & OpenChamber full bundle
 │       ├── README.md
-│       └── mcp-servers.json
+│       ├── opencode.jsonc                # Complete configuration file
+│       └── skills/swiftfairy/
+│           └── SKILL.md
 └── docs/
     └── swift-integration-patch.md        # Architectural guide for SwiftFairy macOS app
 ```
@@ -78,14 +67,13 @@ swiftfairy-integrations/
 ./swiftfairy-standin install antigravity-ide
 ./swiftfairy-standin install gemini
 ./swiftfairy-standin install opencode
-./swiftfairy-standin install xcode
-./swiftfairy-standin install cursor
-./swiftfairy-standin install vscode
 ./swiftfairy-standin install all
 
 # Uninstall an integration
 ./swiftfairy-standin uninstall antigravity
+./swiftfairy-standin uninstall antigravity-ide
 ./swiftfairy-standin uninstall gemini
+./swiftfairy-standin uninstall opencode
 ./swiftfairy-standin uninstall all
 
 # Verify the stdio helper binary
@@ -101,6 +89,6 @@ For the SwiftFairy maintainers (Nil Coalescing / Natalia Panferova):
 1. **Add [`SwiftFairyIntegrationInstaller.swift`](./SwiftFairyIntegrationInstaller.swift) into your project**:
    - Compiles cleanly under Swift 6 (Strict Concurrency ready).
    - Provides safe file-copying, template placeholder substitution (`__SWIFTFAIRY_STDIO_HELPER__`), JSON merge, and folder trust authorization.
-   - Detects versioned beta Xcode installations via `/usr/bin/xcode-select -p`.
+   - Deploys full agent skills and rules for Antigravity IDE and OpenCode.
 2. **Copy `bundles/*` into `SwiftFairy.app/Contents/Resources/`**.
 3. See [`docs/swift-integration-patch.md`](./docs/swift-integration-patch.md) for complete architectural documentation, ViewModel patterns, and troubleshooting notes.

@@ -3,12 +3,9 @@
 This document provides Nil Coalescing Limited with the architectural blueprint and integration documentation for the drop-in [`SwiftFairyIntegrationInstaller.swift`](../SwiftFairyIntegrationInstaller.swift) source file, supporting:
 
 * **Google Antigravity** (Agent Manager & CLI)
-* **Antigravity IDE**
+* **Antigravity IDE** (with complete MCP, Skill, and Rules support)
 * **Gemini CLI** (with zero-hang Folder Trust pre-authorization)
-* **OpenCode & OpenChamber**
-* **Xcode 16 / 27 Coding Assistant** (with versioned Xcode fallback)
-* **Cursor**
-* **Visual Studio Code & VS Code Insiders**
+* **OpenCode & OpenChamber** (with comment-safe JSONC and skills)
 
 ---
 
@@ -17,10 +14,10 @@ This document provides Nil Coalescing Limited with the architectural blueprint a
 SwiftFairy originally relied on spawning external CLI subprocesses (`Process()`) to install extensions for tools like Gemini CLI. In headless macOS GUI environments, non-interactive subprocesses that prompt for authorization deadlock, leaving the app in an infinite "idling" state.
 
 The improved architecture standardizes on **Declarative Direct Placement**:
-1. **Zero Process Execution**: Extensions and plugins are copied directly into the agent's expected configuration directory (`~/.gemini/antigravity/plugins/`, `~/.gemini/extensions/`, `~/.cursor/plugins/local/`).
+1. **Zero Process Execution**: Extensions, plugins, and skills are copied directly into the agent's expected configuration directory (`~/.gemini/antigravity/plugins/`, `~/.gemini/extensions/`, `~/.config/opencode/`).
 2. **Template Variable Substitution**: Bundled JSON configurations contain `__SWIFTFAIRY_STDIO_HELPER__`, which is substituted with the runtime path to `swiftfairy-stdio` during copy.
 3. **Pre-Authorization of Security Stores**: Security stores (such as Gemini's `~/.gemini/trustedFolders.json`) are updated directly by SwiftFairy, preventing headless stdin blockages.
-4. **Dynamic Environment Queries**: Where external tools are necessary (such as detecting versioned beta Xcode installations), SwiftFairy queries `/usr/bin/xcode-select -p` rather than checking hardcoded paths.
+4. **Complete Multi-Tier Bundles**: Integrations provide not just MCP server definitions, but the actual agent skills (`SKILL.md`), contextual rules (`AGENTS.md`), and lifecycle hooks required for the agent to effectively audit Swift and SwiftUI code.
 
 ---
 
@@ -36,13 +33,15 @@ SwiftFairy.app/Contents/Resources/
 │   ├── hooks/
 │   │   ├── hooks.json
 │   │   └── hydrate-swiftfairy-source.js
-│   └── skills/swiftfairy/SKILL.md
+│   └── skills/swiftfairy/
+│       └── SKILL.md
 ├── AntigravityIDE/
-│   └── mcp.json
-├── Cursor/
-│   ├── plugin.json
 │   ├── mcp.json
-│   └── skills/swiftfairy/SKILL.md
+│   ├── settings.json
+│   ├── rules/
+│   │   └── AGENTS.md
+│   └── skills/swiftfairy/
+│       └── SKILL.md
 ├── GeminiCLI/
 │   ├── gemini-extension.json
 │   ├── GEMINI.md
@@ -50,15 +49,12 @@ SwiftFairy.app/Contents/Resources/
 │   ├── hooks/
 │   │   ├── hooks.json
 │   │   └── hydrate-swiftfairy-source.js
-│   └── skills/swiftfairy/SKILL.md
-├── OpenCode/
-│   ├── opencode.jsonc
-│   └── skills/swiftfairy/SKILL.md
-├── VSCode/
-│   ├── mcp.json
-│   └── settings.json
-└── Xcode/
-    └── mcp-servers.json
+│   └── skills/swiftfairy/
+│       └── SKILL.md
+└── OpenCode/
+    ├── opencode.jsonc
+    └── skills/swiftfairy/
+        └── SKILL.md
 ```
 
 ---
@@ -102,12 +98,6 @@ final class IntegrationsViewModel {
                 try installer.installGeminiExtensionDirectly(stdioHelperPath: helperURL.path)
             case .openCode:
                 try installer.installOpenCodeIntegration(stdioHelperPath: helperURL.path)
-            case .xcode:
-                try installer.installXcodeIntegration(stdioHelperPath: helperURL.path)
-            case .cursor:
-                try installer.installCursorPlugin(stdioHelperPath: helperURL.path)
-            case .vscode:
-                try installer.installVSCodeIntegration(stdioHelperPath: helperURL.path)
             }
             refresh()
         } catch {
@@ -126,12 +116,6 @@ final class IntegrationsViewModel {
                 try installer.uninstallGeminiExtensionDirectly()
             case .openCode:
                 try installer.uninstallOpenCodeIntegration()
-            case .xcode:
-                try installer.uninstallXcodeIntegration()
-            case .cursor:
-                try installer.uninstallCursorPlugin()
-            case .vscode:
-                try installer.uninstallVSCodeIntegration()
             }
             refresh()
         } catch {
@@ -151,8 +135,8 @@ final class IntegrationsViewModel {
 * **Special Features**: Includes `PreToolUse` hook (`hydrate-swiftfairy-source.js`) to transfer active editor Swift code directly into tool invocation arguments without context-window pollution.
 
 ### 2. Antigravity IDE
-* **Target**: `~/Library/Application Support/Antigravity IDE/User/mcp.json`
-* **Mechanism**: Safely loads and merges the `swiftfairy` key under `mcpServers`.
+* **Target**: `~/Library/Application Support/Antigravity IDE/User/mcp.json` & `~/.gemini/antigravity/skills/swiftfairy/SKILL.md`
+* **Mechanism**: Registers the MCP server under the IDE's User settings and deploys the `swiftfairy` skill and rules to enable both inline code lenses and sidebar chat agents to leverage SwiftFairy guidance.
 
 ### 3. Gemini CLI
 * **Target**: `~/.gemini/extensions/swiftfairy/` & `~/.gemini/trustedFolders.json`
@@ -162,11 +146,3 @@ final class IntegrationsViewModel {
 ### 4. OpenCode & OpenChamber
 * **Target**: `~/.config/opencode/opencode.jsonc` & `~/.config/opencode/skills/swiftfairy/SKILL.md`
 * **Mechanism**: Safely strips JSONC comments, merges `mcp.swiftfairy`, and deploys the agent skill.
-
-### 5. Xcode CodingAssistant
-* **Target**: `~/Library/Developer/Xcode/CodingAssistant/mcp-servers.json`
-* **Mechanism**: Writes the stdio helper to Xcode's MCP registry. Detection falls back to `/usr/bin/xcode-select -p` to support multiple beta installations (e.g. from Xcodes.app).
-
-### 6. Cursor & Visual Studio Code
-* **Cursor Target**: `~/.cursor/plugins/local/swiftfairy/`
-* **VS Code Target**: `~/Library/Application Support/Code/User/mcp.json`

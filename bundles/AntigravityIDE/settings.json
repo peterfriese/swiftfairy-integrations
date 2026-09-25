@@ -1,8 +1,9 @@
 {
-  "mcpServers": {
+  "mcp.servers": {
     "swiftfairy": {
       "command": "__SWIFTFAIRY_STDIO_HELPER__",
       "args": []
     }
-  }
+  },
+  "antigravity.agent.enabled": true
 }
