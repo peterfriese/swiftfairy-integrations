@@ -1,0 +1,9 @@
+{
+  "name": "swiftfairy",
+  "version": "0.1.4",
+  "description": "Audit Swift code and query Nil Coalescing reference scrolls through the local SwiftFairy app.",
+  "author": {
+    "name": "Nil Coalescing"
+  },
+  "homepage": "https://tools.nilcoalescing.com/swiftfairy/"
+}

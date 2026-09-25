@@ -1,0 +1,12 @@
+{
+  // Add this "mcp" object into your ~/.config/opencode/opencode.jsonc file:
+  "mcp": {
+    "swiftfairy": {
+      "type": "local",
+      "command": [
+        "__SWIFTFAIRY_STDIO_HELPER__"
+      ],
+      "enabled": true
+    }
+  }
+}

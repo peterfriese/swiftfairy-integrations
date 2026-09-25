@@ -1,0 +1,179 @@
+# SwiftFairy Integration Patch for Antigravity, Antigravity IDE & OpenCode
+
+This document provides Nil Coalescing with the exact Swift code enhancements to support Google Antigravity (CLI & Desktop), Antigravity IDE, and OpenCode / OpenChamber directly inside SwiftFairy.
+
+---
+
+## 1. Antigravity Agent Manager & CLI Integration
+
+### Strategy: Direct Plugin Placement (No Interactive CLI Subprocess)
+Antigravity automatically discovers plugins located in:
+`~/.gemini/antigravity/plugins/<plugin_name>/`
+
+By copying the pre-packaged `AntigravityPlugin` bundle directly into this folder and substituting `__SWIFTFAIRY_STDIO_HELPER__`, Antigravity instantly:
+- Lists SwiftFairy in the **Agent Manager** and `agy plugin list`.
+- Registers the `swiftfairy` skill for subagents and prompts.
+- Launches the `swiftfairy-stdio` MCP server on demand.
+- Executes `hydrate-swiftfairy-source.js` during `PreToolUse` for private source transfer.
+
+```swift
+extension SwiftFairyIntegrationInstaller {
+
+    var isAntigravityInstalled: Bool {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        let antigravityDir = home.appendingPathComponent(".gemini/antigravity")
+        
+        let candidateCLIs = [
+            "/opt/homebrew/bin/agy",
+            "/usr/local/bin/agy",
+            home.appendingPathComponent(".local/bin/agy").path
+        ]
+        
+        return fm.fileExists(atPath: antigravityDir.path) || 
+               candidateCLIs.contains { fm.fileExists(atPath: $0) }
+    }
+
+    func installAntigravityPlugin(stdioHelperPath: String) throws {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        let targetPluginDir = home.appendingPathComponent(".gemini/antigravity/plugins/swiftfairy")
+        
+        try fm.createDirectory(at: targetPluginDir, withIntermediateDirectories: true)
+        
+        guard let bundleURL = Bundle.main.url(forResource: "AntigravityPlugin", withExtension: nil) else {
+            throw IntegrationError.bundledIntegrationMissing
+        }
+        
+        // Copy recursively, replacing __SWIFTFAIRY_STDIO_HELPER__ in JSON configs
+        try copyAndSubstitute(
+            from: bundleURL, 
+            to: targetPluginDir, 
+            placeholder: "__SWIFTFAIRY_STDIO_HELPER__", 
+            replacement: stdioHelperPath
+        )
+    }
+
+    func uninstallAntigravityPlugin() throws {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        let targetPluginDir = home.appendingPathComponent(".gemini/antigravity/plugins/swiftfairy")
+        if fm.fileExists(atPath: targetPluginDir.path) {
+            try fm.removeItem(at: targetPluginDir)
+        }
+    }
+}
+```
+
+---
+
+## 2. Antigravity IDE Integration
+
+### Strategy: One-line addition to VS Code Profile Array
+Antigravity IDE is built on the VS Code shell and stores its MCP settings in `~/Library/Application Support/Antigravity IDE/User/mcp.json`.
+
+In SwiftFairy's existing VS Code profile scanner, add `Antigravity IDE`:
+
+```swift
+let supportedVSCodeProfiles = [
+    "Library/Application Support/Code/User/mcp.json",
+    "Library/Application Support/Code - Insiders/User/mcp.json",
+    "Library/Application Support/Antigravity IDE/User/mcp.json" // <── Add this path!
+]
+```
+
+---
+
+## 3. OpenCode & OpenChamber Integration
+
+### Strategy: Merge into `~/.config/opencode/opencode.jsonc` and Copy Skill
+OpenCode uses an `mcp` dictionary with an array command `["path/to/helper"]`.
+
+```swift
+extension SwiftFairyIntegrationInstaller {
+
+    var isOpenCodeInstalled: Bool {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        let configDir = home.appendingPathComponent(".config/opencode")
+        let openChamberDir = home.appendingPathComponent(".config/openchamber")
+        
+        let candidatePaths = [
+            "/Applications/OpenCode.app",
+            "/opt/homebrew/bin/opencode",
+            "/usr/local/bin/opencode",
+            home.appendingPathComponent(".local/bin/opencode").path
+        ]
+        
+        return fm.fileExists(atPath: configDir.path) ||
+               fm.fileExists(atPath: openChamberDir.path) ||
+               candidatePaths.contains { fm.fileExists(atPath: $0) }
+    }
+
+    func installOpenCodeIntegration(stdioHelperPath: String) throws {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        let configURL = home.appendingPathComponent(".config/opencode/opencode.jsonc")
+        
+        // 1. Merge MCP Server Entry
+        var json = (try? loadJSON(at: configURL)) ?? [:]
+        var mcpDict = json["mcp"] as? [String: Any] ?? [:]
+        
+        mcpDict["swiftfairy"] = [
+            "type": "local",
+            "command": [stdioHelperPath],
+            "enabled": true
+        ]
+        json["mcp"] = mcpDict
+        try saveJSON(json, to: configURL)
+        
+        // 2. Install Skill
+        let targetSkillDir = home.appendingPathComponent(".config/opencode/skills/swiftfairy")
+        try fm.createDirectory(at: targetSkillDir, withIntermediateDirectories: true)
+        
+        if let skillURL = Bundle.main.url(forResource: "SKILL", withExtension: "md", subdirectory: "AgentPlugin/skills/swiftfairy") {
+            let dest = targetSkillDir.appendingPathComponent("SKILL.md")
+            try? fm.removeItem(at: dest)
+            try fm.copyItem(at: skillURL, to: dest)
+        }
+    }
+}
+```
+
+---
+
+## 4. Robust Xcode Detection Fallback
+
+If a user installs multiple beta versions of Xcode via Xcodes.app, `/Applications/Xcode.app` may be a broken symlink or missing entirely. Adding `xcode-select -p` fallback guarantees detection:
+
+```swift
+var activeXcodeURL: URL? {
+    let standardURLs = [
+        URL(fileURLWithPath: "/Applications/Xcode.app"),
+        URL(fileURLWithPath: "/Applications/Xcode-beta.app")
+    ]
+    for url in standardURLs where FileManager.default.fileExists(atPath: url.path) {
+        return url
+    }
+    
+    // Fallback: Query active xcode-select developer directory
+    let pipe = Pipe()
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+    process.arguments = ["-p"]
+    process.standardOutput = pipe
+    try? process.run()
+    process.waitUntilExit()
+    
+    guard process.terminationStatus == 0,
+          let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !output.isEmpty else {
+        return nil
+    }
+    
+    // /Applications/Xcode-27.x.app/Contents/Developer -> traverse up 2 levels
+    let devURL = URL(fileURLWithPath: output)
+    let appURL = devURL.deletingLastPathComponent().deletingLastPathComponent()
+    return FileManager.default.fileExists(atPath: appURL.path) ? appURL : nil
+}
+```
